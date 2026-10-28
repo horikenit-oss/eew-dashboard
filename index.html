@@ -1,0 +1,627 @@
+<!doctype html>
+<!-- 三郷 地震速報ダッシュボード (iPhone 用) | earthquake_alert/web/index.html
+     通知 (ntfy / Bark) をタップすると開く。URL の # の後ろに地震・津波の情報が入っていて、開いた瞬間に表示する。
+     そのあとはページが自分で、Wolfx (緊急地震速報)・P2P地震情報 (地震情報・津波予報)・気象庁XML (津波の観測など) を受けて更新する。
+     # の後ろはサーバーに送られない。個人用 -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0D1117">
+<title>三郷 地震速報</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root {
+  --bg: #0D1117; --panel: #151B23; --line: #222A35; --text: #EEF1F5; --sub: #B7C0CC; --dim: #8FA0B3;
+  --red: #E5332A; --orange: #F08A24; --yellow: #F2C230; --blue: #2F6FD6; --sky: #5AC8E8; --purple: #8E3FD0; --green: #8FE3AE;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif; -webkit-text-size-adjust: 100%;
+       padding-bottom: env(safe-area-inset-bottom); }
+.wrap { max-width: 520px; margin: 0 auto; }
+.num { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+.drill { background: var(--yellow); color: #1A1400; font-weight: 900; text-align: center; padding: 6px 0; letter-spacing: .2em; font-size: 15px; }
+.status { display: flex; justify-content: space-between; align-items: center; padding: calc(env(safe-area-inset-top) + 6px) 16px 6px;
+          font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--line); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #5A6472; margin-right: 6px; vertical-align: 1px; }
+.dot.on { background: #4CC37A; }
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border-bottom: 1px solid var(--line); }
+.tabs button { background: none; border: 0; color: var(--sub); font: inherit; font-size: 15px; font-weight: 700; padding: 12px 0; min-height: 44px; }
+.tabs button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -3px 0 var(--text); }
+.tabs .badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 11px; color: #fff; }
+header.ev { padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); }
+.chip { font-weight: 700; font-size: 13px; padding: 3px 8px; border-radius: 4px; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 30px; font-weight: 900; }
+h2 { margin: 0; font-size: 16px; font-weight: 700; }
+.meta { font-size: 13px; color: var(--sub); }
+nav.links { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 16px; }
+nav.links a { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 56px; border-radius: 10px;
+              font-weight: 700; font-size: 17px; text-decoration: none; }
+.yt { background: #C4302B; color: #fff; } .nhk { background: var(--text); color: var(--bg); }
+.count { margin: 0 16px; padding: 14px 16px; border-radius: 12px; display: flex; flex-direction: column; gap: 8px; }
+.count.hit { background: #3A0F0F; border: 2px solid var(--red); }
+.count.safe { background: var(--panel); border: 1px solid var(--line); }
+.count .big { font-size: 64px; font-weight: 700; line-height: 1; }
+.bar { height: 8px; border-radius: 4px; background: #5A1E1E; overflow: hidden; } .bar > div { height: 8px; background: var(--red); }
+.boxes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px 16px; }
+.box { border-radius: 10px; padding: 10px 6px; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.box .lab { font-size: 11px; font-weight: 700; } .box .val { font-size: 34px; font-weight: 900; line-height: 1.1; } .box .sm { font-size: 10px; }
+.map { margin: 0 16px; height: 300px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #0B2236; }
+.leaflet-container { background: #0B2236; }
+.leaflet-tile-pane { filter: invert(1) hue-rotate(185deg) brightness(.85) contrast(.9); }
+.leaflet-control-attribution { font-size: 9px; background: rgba(13,17,23,.7) !important; color: var(--dim); }
+.leaflet-control-attribution a { color: var(--sub); }
+section.blk { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.list > div { display: grid; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid #1A212B; font-size: 13px; }
+.list > div:last-child { border-bottom: 0; }
+.rep { grid-template-columns: 52px 1fr 52px 50px 34px; }
+.infos { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.infos li { display: grid; grid-template-columns: 70px 1fr; gap: 8px; padding: 8px 10px; background: var(--panel); border-radius: 8px; font-size: 13px; }
+.note { margin: 0 16px 16px; padding: 12px 14px; border-radius: 10px; font-size: 14px; }
+.ok { background: #12261B; border: 1px solid #2F6B47; } .warnbox { background: #3A0F0F; border: 1px solid var(--red); } .neutral { background: var(--panel); border: 1px solid var(--line); color: var(--sub); }
+.tsu-head { padding: 18px 16px; display: flex; flex-direction: column; gap: 4px; color: #fff; }
+.tsu-head .big { font-size: 40px; font-weight: 900; line-height: 1.15; }
+.area { grid-template-columns: 8px 1fr 64px 56px; padding-left: 0 !important; font-size: 14px !important; }
+.area .sw { align-self: stretch; }
+.obs > div { grid-template-columns: 1fr 70px 70px; font-size: 14px; }
+.empty { padding: 40px 16px; text-align: center; color: var(--sub); font-size: 15px; }
+footer { padding: 12px 16px 24px; font-size: 11px; color: var(--dim); border-top: 1px solid var(--line); }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="drill" class="drill" hidden>【訓練】これは再現です</div>
+  <div class="status"><span><span id="dot" class="dot"></span><span id="conn">接続していません</span></span><span id="updated" class="num"></span></div>
+  <div class="tabs" role="tablist">
+    <button id="tab-eq" role="tab" aria-selected="true" aria-controls="view-eq">地震</button>
+    <button id="tab-tsu" role="tab" aria-selected="false" aria-controls="view-tsu">津波<span id="tsu-badge" class="badge" hidden></span></button>
+  </div>
+
+  <nav class="links">
+    <a class="yt" href="https://youtu.be/I5_vUnu1GN4"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9l5 3-5 3z" fill="currentColor"/></svg>YouTube</a>
+    <a class="nhk" href="https://www.web.nhk/tv/g1"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>NHK総合</a>
+  </nav>
+
+  <!-- 地震 -->
+  <main id="view-eq" role="tabpanel">
+    <div id="eq-empty" class="empty">いま出ている緊急地震速報はありません</div>
+    <div id="eq-body" hidden>
+      <header class="ev">
+        <div class="row"><span id="ev-kind" class="chip"></span><span id="ev-serial" class="meta"></span><span id="ev-final" class="chip" hidden></span></div>
+        <h1 id="ev-hypo"></h1>
+        <div id="ev-meta" class="meta"></div>
+      </header>
+      <section id="count" class="count safe" aria-label="三郷への揺れ到達" style="margin-top:12px">
+        <div class="row" style="justify-content:space-between"><span id="count-lab" style="font-size:15px;font-weight:700"></span><span id="count-int" style="font-size:13px"></span></div>
+        <div id="count-main" class="row" style="align-items:baseline;gap:6px"></div>
+        <div id="count-bar" class="bar" hidden><div></div></div>
+        <div id="count-sub" style="font-size:12px;color:var(--dim)"></div>
+      </section>
+      <section class="boxes" aria-label="大きさと震度">
+        <div id="box-m" class="box"><span class="lab">マグニチュード</span><span class="val num"></span><span class="sm"></span></div>
+        <div id="box-max" class="box"><span class="lab">最大震度</span><span class="val"></span><span class="sm"></span></div>
+        <div id="box-home" class="box"><span class="lab">三郷</span><span class="val"></span><span class="sm"></span></div>
+      </section>
+      <div id="map" class="map" role="img" aria-label="震源とP波・S波の広がり、三郷の位置の地図"></div>
+      <section class="blk" aria-label="速報の移り変わり">
+        <div class="row" style="justify-content:space-between"><h2>速報の移り変わり</h2><span id="rep-n" class="meta"></span></div>
+        <svg id="spark" width="100%" height="44" viewBox="0 0 358 44" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div id="reps" class="list"></div>
+      </section>
+      <section class="blk" aria-label="気象庁の地震情報" style="padding-top:0">
+        <h2>気象庁の地震情報</h2>
+        <ol id="infos" class="infos"></ol>
+      </section>
+      <div id="eq-tsu" class="note neutral"></div>
+    </div>
+    <section id="recent-wrap" class="blk" aria-label="最近の地震">
+      <h2>最近の地震（気象庁の地震情報）</h2>
+      <div id="recent" class="list"></div>
+    </section>
+  </main>
+
+  <!-- 津波 -->
+  <main id="view-tsu" role="tabpanel" hidden>
+    <div id="tsu-empty" class="empty">いま出ている津波予報はありません</div>
+    <div id="tsu-body" hidden>
+      <section id="tsu-head" class="tsu-head"><span id="tsu-issue" style="font-size:13px;font-weight:700;letter-spacing:.1em"></span><span id="tsu-grade" class="big"></span><span id="tsu-msg" style="font-size:15px"></span></section>
+      <div id="tsu-map" class="map" style="margin-top:12px" role="img" aria-label="津波予報区ごとに海岸線を色分けした地図"></div>
+      <section class="blk"><h2>予報区ごとの発表</h2><div id="areas" class="list"></div></section>
+    </div>
+    <section id="obs-wrap" class="blk" style="padding-top:0" hidden><h2>観測された津波</h2><div id="obs" class="list obs"></div></section>
+    <div id="extra" class="note neutral">南海トラフ地震臨時情報・後発地震注意情報：発表なし</div>
+  </main>
+
+  <footer>出典: 気象庁（津波予報区の形も気象庁のデータから作成）・Wolfx・P2P地震情報・地図 国土地理院<br>揺れの到達は「震央からの距離 ÷ 4km/秒」の目安です</footer>
+</div>
+
+<script>
+'use strict';
+// ---- 設定 ----
+const MISATO = [35.8260, 139.8721];
+const VP = 7.0, VS = 4.0;                        // km/秒 (Mac 版と同じ)
+const WOLFX_WS = 'wss://ws-api.wolfx.jp/jma_eew';
+const WOLFX_LATEST = 'https://api.wolfx.jp/jma_eew.json';
+const P2P = 'https://api.p2pquake.net/v2';
+const P2P_WS = 'wss://api.p2pquake.net/v2/ws';
+const JMA_FEED = 'https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml';
+const GRADE = { MajorWarning: ['大津波警報', '#8E3FD0'], Warning: ['津波警報', '#E5332A'], Watch: ['津波注意報', '#F2C230'], Unknown: ['津波予報', '#5AC8E8'] };
+const GRADE_CODE = { M: 'MajorWarning', W: 'Warning', A: 'Watch', U: 'Unknown' };
+const RANK = { Unknown: 0, Watch: 1, Warning: 2, MajorWarning: 3 };
+const SCALE = { 10: '1', 20: '2', 30: '3', 40: '4', 45: '5弱', 46: '5弱以上', 50: '5強', 55: '6弱', 60: '6強', 70: '7' };
+
+const $ = (id) => document.getElementById(id);
+const S = { drill: false, eew: null, reports: [], infos: [], tsu: null, obs: [], extra: [], areas: null, recent: [] };
+
+// ---- 小道具 ----
+function jst(s) {           // "2026/10/29 00:07:52" (日本時間) → Date
+  if (!s) return null;
+  const m = String(s).match(/(\d{4})[\/-](\d{2})[\/-](\d{2})[ T](\d{2}):(\d{2}):?(\d{2})?/);
+  return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] || '00'}+09:00`) : null;
+}
+const hms = (d) => d ? d.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+const hm = (d) => hms(d).slice(0, 5);
+function km(a, b) {
+  const R = 6371, r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r;
+  const x = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+const level = (s) => { const m = String(s ?? '').match(/\d/); return m ? +m[0] : 0; };   // "5弱" → 5 (Mac 版と同じ)
+function intColor(s) {      // [背景, 文字]
+  const t = String(s ?? '');
+  if (t.startsWith('7')) return ['#7A1FA2', '#fff'];
+  if (t.startsWith('6')) return ['#A0141E', '#fff'];
+  if (t.startsWith('5')) return ['#E5332A', '#fff'];
+  if (t.startsWith('4')) return ['#F08A24', '#1A0E00'];
+  if (t.startsWith('3')) return ['#F2C230', '#1A1400'];
+  if (/^[0-2]/.test(t)) return ['#2F6FD6', '#fff'];
+  return ['#2A3240', '#EEF1F5'];
+}
+function magColor(m) {
+  if (m == null || m < 0) return ['#2A3240', '#EEF1F5'];
+  if (m >= 7) return ['#7A1FA2', '#fff'];
+  if (m >= 6) return ['#E5332A', '#fff'];
+  if (m >= 5) return ['#F08A24', '#1A0E00'];
+  return ['#2F6FD6', '#fff'];
+}
+function paint(el, [bg, fg]) { el.style.background = bg; el.style.color = fg; }
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === 'style') e.style.cssText = v; else e.setAttribute(k, v); }
+  for (const k of kids) e.append(k);
+  return e;
+}
+function stamp() { $('updated').textContent = '更新 ' + hms(new Date()); }
+
+// ---- # の後ろの情報 ----
+function readHash() {
+  const m = location.hash.match(/d=([A-Za-z0-9_-]+)/);
+  if (!m) return null;
+  try {
+    let b = m[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b.length % 4) b += '=';
+    const bytes = Uint8Array.from(atob(b), (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch (e) { console.warn('リンクの情報を読めません', e); return null; }
+}
+const fromHashEEW = (e) => ({ id: e.id, serial: e.s, hypo: e.h, mag: e.m, maxInt: e.i, lat: e.la, lon: e.lo, depth: e.dp,
+  origin: jst(e.o), announced: jst(e.a), warn: !!e.w, final: !!e.f, cancel: !!e.c, homeArea: e.ha || null, homeLevel: e.hl || 0 });
+
+// Wolfx の電文 → 内部の形
+function fromWolfx(m) {
+  let ha = null, hl = 0;
+  for (const a of m.WarnArea || []) {
+    if (!(a.Chiiki || '').includes('埼玉')) continue;
+    const lv = Math.max(level(a.Shindo1), level(a.Shindo2));
+    if (lv > hl) { hl = lv; ha = a.Chiiki; }
+  }
+  return { id: m.EventID, serial: m.Serial, hypo: m.Hypocenter, mag: m.Magunitude ?? m.Magnitude, maxInt: m.MaxIntensity,
+    lat: m.Latitude, lon: m.Longitude, depth: m.Depth, origin: jst(m.OriginTime), announced: jst(m.AnnouncedTime),
+    warn: !!m.isWarn || /警報/.test(m.Title || ''), final: !!m.isFinal, cancel: !!m.isCancel, homeArea: ha, homeLevel: hl };
+}
+
+// ---- 緊急地震速報 ----
+function takeEEW(e, { fromLive = false } = {}) {
+  if (!e || !e.id) return;
+  if (S.eew && S.eew.id === e.id) {
+    if ((e.serial ?? 0) < (S.eew.serial ?? 0)) return;
+  } else if (S.eew && fromLive && S.drill) {
+    S.drill = false; $('drill').hidden = true;      // 訓練の表示中に本物が来たら本物を優先
+  }
+  if (!S.eew || S.eew.id !== e.id) { S.reports = []; S.infos = []; }
+  S.eew = e;
+  if (!S.reports.some((r) => r.serial === e.serial)) S.reports.push({ serial: e.serial, hypo: e.hypo, mag: e.mag, maxInt: e.maxInt, final: e.final });
+  S.reports.sort((a, b) => a.serial - b.serial);
+  renderEEW(); stamp();
+  if (!S.drill) fetchQuakeInfo();
+}
+
+function renderEEW() {
+  const e = S.eew;
+  $('eq-empty').hidden = !!e; $('eq-body').hidden = !e;
+  if (!e) return;
+  const kind = $('ev-kind');
+  kind.textContent = e.cancel ? '取消' : (e.warn ? '緊急地震速報（警報）' : '緊急地震速報（予報）');
+  paint(kind, e.cancel ? ['#5A6472', '#fff'] : e.warn ? ['#E5332A', '#fff'] : ['#F08A24', '#1A0E00']);
+  $('ev-serial').textContent = `第${e.serial}報`;
+  const fin = $('ev-final'); fin.hidden = !e.final; fin.textContent = '最終報';
+  fin.style.cssText = 'border:1px solid #5FD08A;color:#8FE3AE';
+  $('ev-hypo').textContent = e.hypo || '震源不明';
+  $('ev-meta').textContent = [e.origin ? `発生 ${hms(e.origin)}頃` : '', e.depth != null ? `深さ ${e.depth}km` : ''].filter(Boolean).join('　');
+  renderBoxes(); renderReports(); renderInfos(); drawQuakeMap(); tick();
+}
+
+// 大きい枠: 地震情報 (公式) が出たらそちらを大きく、速報の値を小さく添える
+function renderBoxes() {
+  const e = S.eew, info = officialFor();
+  const set = (id, val, sm, color) => { const b = $(id); b.querySelector('.val').textContent = val; b.querySelector('.sm').textContent = sm; paint(b, color); };
+  const fm = (m) => (m == null || m < 0) ? '—' : Number(m).toFixed(1);
+  if (info.mag != null) set('box-m', fm(info.mag), `公式　速報は${fm(e.mag)}`, magColor(info.mag));
+  else set('box-m', fm(e.mag), '速報', magColor(e.mag));
+  if (info.max) set('box-max', info.max.label, `観測 ${info.max.time}　速報は${e.maxInt || '不明'}`, intColor(info.max.label));
+  else set('box-max', e.maxInt || '不明', '速報（予想）', intColor(e.maxInt));
+  if (info.misato) set('box-home', info.misato, `観測　予想は${e.homeLevel || '—'}`, intColor(info.misato));
+  else set('box-home', e.homeLevel ? String(e.homeLevel) : '—', e.homeLevel ? '予想' : '揺れない予想', e.homeLevel ? intColor(String(e.homeLevel)) : ['#2A3240', '#EEF1F5']);
+}
+
+function renderReports() {
+  const box = $('reps'); box.textContent = '';
+  let prev = null;
+  for (const r of S.reports) {
+    let mark = '', c = 'var(--dim)';
+    if (prev && r.mag != null && prev.mag != null) {
+      if (r.mag > prev.mag) { mark = '↑'; c = '#FF8A80'; } else if (r.mag < prev.mag) { mark = '↓'; c = '#7FB2FF'; }
+    }
+    if (r.final) { mark = '最終'; c = 'var(--green)'; }
+    box.append(el('div', { class: 'rep' },
+      el('span', { style: 'color:var(--dim)' }, `第${r.serial}報`), el('span', {}, r.hypo || ''),
+      el('span', { class: 'num' }, r.mag != null ? `M${Number(r.mag).toFixed(1)}` : ''), el('span', {}, `震度${r.maxInt || '?'}`),
+      el('span', { style: `font-weight:700;color:${c}` }, mark)));
+    prev = r;
+  }
+  $('rep-n').textContent = `${S.reports.length}報`;
+  // M の小さな折れ線
+  const ms = S.reports.map((r) => r.mag).filter((m) => m != null);
+  const sv = $('spark'); sv.textContent = '';
+  if (ms.length >= 2) {
+    const lo = Math.min(...ms) - 0.2, hi = Math.max(...ms) + 0.2;
+    const pts = ms.map((m, i) => `${4 + i * (350 / (ms.length - 1))},${40 - (m - lo) / (hi - lo) * 34}`).join(' ');
+    sv.innerHTML = `<polyline points="${pts}" fill="none" stroke="#F08A24" stroke-width="2.5"/>`;
+  }
+}
+
+// ---- 地図 (地震) ----
+let qmap, qLayers = null;
+function drawQuakeMap() {
+  const e = S.eew;
+  if (!window.L || !e || e.lat == null) return;
+  if (!qmap) {
+    qmap = L.map('map', { zoomControl: false, attributionControl: true });
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', { maxZoom: 12, attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>' }).addTo(qmap);
+    L.circleMarker(MISATO, { radius: 6, color: '#0D1117', weight: 2, fillColor: '#fff', fillOpacity: 1 }).addTo(qmap).bindTooltip('三郷', { permanent: true, direction: 'top', className: '' });
+  }
+  if (qLayers) qLayers.forEach((l) => l.remove());
+  const epi = [e.lat, e.lon];
+  const star = L.divIcon({ className: '', html: '<svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 2l3 6.5 7 1-5 5 1.2 7L12 18l-6.2 3.5L7 14.5l-5-5 7-1z" fill="#FFD23F" stroke="#1A1400"/></svg>', iconSize: [22, 22], iconAnchor: [11, 11] });
+  const p = L.circle(epi, { radius: 1, color: '#5AA9FF', weight: 2, dashArray: '6 5', fill: false });
+  const s = L.circle(epi, { radius: 1, color: '#E5332A', weight: 2.5, fillColor: '#E5332A', fillOpacity: .18 });
+  qLayers = [p, s, L.marker(epi, { icon: star })];
+  qLayers.forEach((l) => l.addTo(qmap));
+  qmap.fitBounds(L.latLngBounds([epi, MISATO]).pad(1.2), { maxZoom: 8 });
+}
+
+// 0.1 秒ごと: 三郷までの残り秒数と P波・S波の円
+function tick() {
+  const e = S.eew;
+  if (!e) return;
+  const c = $('count'), main = $('count-main');
+  if (e.lat == null || !e.origin) { c.className = 'count safe'; $('count-lab').textContent = '揺れの到達'; main.textContent = '震源の位置がまだ分かりません'; return; }
+  const dist = km([e.lat, e.lon], MISATO), el2 = (Date.now() - e.origin) / 1000;
+  const remain = dist / VS - el2, at = new Date(e.origin.getTime() + dist / VS * 1000);
+  if (qLayers && el2 < 600) { qLayers[0].setRadius(Math.max(1, el2 * VP * 1000)); qLayers[1].setRadius(Math.max(1, el2 * VS * 1000)); }
+  const hit = e.homeLevel >= 1 && !e.cancel;
+  c.className = 'count ' + (hit ? 'hit' : 'safe');
+  $('count-int').textContent = hit ? `予想震度 ${e.homeLevel}` : '';
+  $('count-int').style.color = '#FFB3AE';
+  $('count-sub').textContent = `距離 約${Math.round(dist)}km・到達予想 ${hms(at)}頃`;
+  const bar = $('count-bar');
+  if (!hit) {
+    $('count-lab').textContent = '三郷は揺れない予想'; main.textContent = ''; bar.hidden = true; return;
+  }
+  if (remain > 0) {
+    $('count-lab').textContent = '三郷に揺れが届くまで';
+    main.innerHTML = `<span style="font-size:15px">あと</span><span class="big num">${remain.toFixed(1)}</span><span style="font-size:20px;font-weight:700">秒</span>`;
+    bar.hidden = false; bar.firstElementChild.style.width = `${Math.min(100, remain / (dist / VS) * 100)}%`;
+  } else {
+    $('count-lab').textContent = '三郷';
+    main.innerHTML = '<span style="font-size:34px;font-weight:900">揺れが届いた頃です</span>';
+    bar.hidden = true;
+  }
+}
+setInterval(tick, 100);
+
+// ---- 地震情報 (P2P地震情報) ----
+function parseQuake(q) {
+  const e = q.earthquake || {}, h = e.hypocenter || {}, pts = q.points || [];
+  const sat = pts.filter((p) => p.pref === '埼玉県').map((p) => p.scale);
+  const mis = pts.filter((p) => p.pref === '埼玉県' && (p.addr || '').includes('三郷')).map((p) => p.scale);
+  return { id: q.id, kind: q.issue?.type, issue: jst(q.issue?.time), time: jst(e.time), hypo: h.name || null,
+    mag: h.magnitude > 0 ? h.magnitude : null, depth: h.depth > 0 ? h.depth : null, maxScale: e.maxScale ?? -1,
+    places: pts.filter((p) => p.scale === e.maxScale).map((p) => p.addr), saitama: sat.length ? Math.max(...sat) : null,
+    misato: mis.length ? Math.max(...mis) : null, tsunami: e.domesticTsunami };
+}
+async function fetchQuakeInfo() {
+  try {
+    const r = await fetch(`${P2P}/history?codes=551&limit=20`, { cache: 'no-store' });
+    const all = (await r.json()).map(parseQuake);
+    // 同じ地震の発表は最新の 1 件だけ (新しい順に並んでいる)
+    const seen = new Set();
+    S.recent = all.filter((q) => ['DetailScale', 'Destination', 'ScaleAndDestination', 'Foreign'].includes(q.kind))
+      .filter((q) => { const k = `${+q.time}|${q.hypo}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 8);
+    renderRecent();
+    const e = S.eew;
+    if (e && e.origin && !S.drill) {
+      // 発生時刻が近いもの (地震情報の時刻は分まで) を同じ地震とみなす
+      S.infos = all.filter((q) => q.time && Math.abs(q.time - e.origin) < 180e3 && q.issue >= e.origin - 60e3).sort((a, b) => a.issue - b.issue);
+      renderInfos(); renderBoxes();
+    }
+    stamp();
+  } catch (err) { console.warn('地震情報を取れません', err); }
+}
+function officialFor() {
+  const out = { mag: null, max: null, misato: null };
+  for (const q of S.infos) {
+    if (q.mag != null) out.mag = q.mag;
+    if (q.maxScale > 0) out.max = { label: SCALE[q.maxScale] || '?', time: hm(q.issue) };
+    if (q.misato != null) out.misato = SCALE[q.misato] || null;
+  }
+  return out;
+}
+function renderInfos() {
+  const ol = $('infos'); ol.textContent = '';
+  const name = { ScalePrompt: '震度速報', Destination: '震源', ScaleAndDestination: '震源・震度', DetailScale: '各地の震度', Foreign: '遠地地震' };
+  for (const q of S.infos) {
+    const bits = [];
+    if (q.maxScale > 0) bits.push(`最大震度${SCALE[q.maxScale]}${q.places.length && q.kind === 'ScalePrompt' ? ' ' + q.places.slice(0, 2).join('・') : ''}`);
+    if (q.hypo) bits.push(`${q.hypo}${q.mag ? ' M' + q.mag.toFixed(1) : ''}${q.depth ? ' 深さ' + q.depth + 'km' : ''}`);
+    if (q.saitama != null) bits.push(`埼玉 ${SCALE[q.saitama]}`);
+    if (q.misato != null) bits.push(`三郷 ${SCALE[q.misato]}`);
+    ol.append(el('li', {}, el('span', { class: 'num', style: 'color:var(--sub)' }, hms(q.issue)), el('span', {}, el('b', {}, name[q.kind] || q.kind), '　' + bits.join('　'))));
+  }
+  if (!S.infos.length) ol.append(el('li', {}, el('span', { class: 'num', style: 'color:var(--sub)' }, '—'), el('span', { style: 'color:var(--sub)' }, S.drill ? '訓練では地震情報を取りに行きません' : 'まだ発表されていません')));
+  const last = S.infos[S.infos.length - 1], t = $('eq-tsu');
+  const txt = { None: 'この地震による津波の心配はありません', NonEffective: '若干の海面変動があるかもしれませんが、被害の心配はありません',
+    Checking: '津波の有無を調査中です', Watch: '津波注意報が出ています（津波のタブ）', Warning: '津波警報などが出ています（津波のタブ）', Unknown: '津波の情報は不明です' };
+  t.textContent = last?.tsunami ? (txt[last.tsunami] || last.tsunami) : '津波の情報はまだありません';
+  t.className = 'note ' + (last?.tsunami === 'None' ? 'ok' : (last?.tsunami === 'Watch' || last?.tsunami === 'Warning') ? 'warnbox' : 'neutral');
+}
+function renderRecent() {
+  const box = $('recent'); box.textContent = '';
+  for (const q of S.recent) {
+    const [bg, fg] = intColor(SCALE[q.maxScale]);
+    box.append(el('div', { style: 'grid-template-columns:44px 1fr 48px 46px' },
+      el('span', { class: 'num', style: 'color:var(--sub)' }, q.time ? hm(q.time) : ''), el('span', {}, q.hypo || '—'),
+      el('span', { class: 'num' }, q.mag ? 'M' + q.mag.toFixed(1) : ''),
+      el('span', { style: `background:${bg};color:${fg};border-radius:4px;text-align:center;font-weight:700` }, SCALE[q.maxScale] || '—')));
+  }
+  if (!S.recent.length) box.append(el('div', {}, '読み込み中…'));
+}
+
+// ---- 津波 ----
+async function loadAreas() {
+  if (S.areas) return S.areas;
+  const r = await fetch('tsunami_areas.json');
+  S.areas = await r.json();
+  S.areaByCode = Object.fromEntries(Object.entries(S.areas).map(([n, v]) => [v.code, n]));
+  return S.areas;
+}
+function fromHashTsu(t) {
+  return { id: t.id, issue: t.it, cancelled: !!t.c,
+    areas: (t.a || []).map(([code, g, arr, h]) => ({ name: (S.areaByCode && S.areaByCode[code]) || code, grade: GRADE_CODE[g] || 'Unknown', arrival: arr, height: h })) };
+}
+function fromP2PTsu(q) {
+  const short = (fh) => {
+    if (!fh) return '';
+    if (fh.arrivalTime) return String(fh.arrivalTime).slice(11, 16);
+    return { 'ただちに津波来襲と予測': 'ただちに', '第１波の到達を確認': '到達', '津波到達中と推測': '到達中' }[fh.condition] || fh.condition || '';
+  };
+  return { id: q.id, issue: String(q.issue?.time || '').slice(11, 19), issueDate: jst(q.issue?.time), cancelled: !!q.cancelled,
+    areas: (q.areas || []).map((a) => ({ name: a.name, grade: a.grade || 'Unknown', arrival: short(a.firstHeight), height: a.maxHeight?.description || '' })) };
+}
+let prevGrades = {};
+function takeTsunami(t) {
+  if (!t) return;
+  const old = S.tsu;
+  prevGrades = old && !old.cancelled ? Object.fromEntries(old.areas.map((a) => [a.name, a.grade])) : {};
+  S.tsu = t; renderTsunami(); stamp();
+}
+function renderTsunami() {
+  const t = S.tsu, active = t && !t.cancelled && t.areas.length;
+  $('tsu-empty').hidden = !!active; $('tsu-body').hidden = !active;
+  $('tsu-empty').textContent = t && t.cancelled ? `津波予報はすべて解除されました（${t.issue}発表）` : 'いま出ている津波予報はありません';
+  const badge = $('tsu-badge');
+  if (!active) { badge.hidden = true; return; }
+  const areas = [...t.areas].sort((a, b) => RANK[b.grade] - RANK[a.grade]);
+  const top = areas[0].grade, [gname, gcolor] = GRADE[top];
+  badge.hidden = false; badge.textContent = gname; badge.style.background = gcolor; badge.style.color = top === 'Watch' ? '#1A1400' : '#fff';
+  const head = $('tsu-head'); head.style.background = gcolor; head.style.color = top === 'Watch' ? '#1A1400' : '#fff';
+  $('tsu-issue').textContent = `気象庁 発表 ${t.issue}`;
+  $('tsu-grade').textContent = gname;
+  $('tsu-msg').textContent = { MajorWarning: '巨大な津波が来ます。ただちに高い所へ避難してください', Warning: 'ただちに海岸から離れ、高い所へ避難してください',
+    Watch: '海の中や海岸付近は危険です。海から上がって離れてください', Unknown: '若干の海面変動があるかもしれません' }[top];
+  const box = $('areas'); box.textContent = '';
+  for (const a of areas) {
+    const p = prevGrades[a.name];
+    const mark = !Object.keys(prevGrades).length ? '' : (p == null ? '新規' : p !== a.grade ? '変更' : '');
+    box.append(el('div', { class: 'area' }, el('span', { class: 'sw', style: `background:${GRADE[a.grade][1]}` }),
+      el('span', { style: 'display:flex;flex-direction:column;gap:2px' }, el('b', {}, a.name), el('span', { style: 'font-size:12px;color:var(--sub)' }, GRADE[a.grade][0] + (mark ? '　' + mark : ''))),
+      el('span', { style: 'font-size:12px;color:var(--sub);text-align:right' }, a.arrival || '—'), el('b', { style: 'text-align:right' }, a.height || '')));
+  }
+  drawTsuMap(areas);
+}
+let tmap, tLayers = [];
+async function drawTsuMap(areas) {
+  if (!window.L) return;
+  await loadAreas();
+  if (!tmap) {
+    tmap = L.map('tsu-map', { zoomControl: false });
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', { maxZoom: 12, attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>' }).addTo(tmap);
+  }
+  tLayers.forEach((l) => l.remove()); tLayers = [];
+  const bounds = L.latLngBounds([]);
+  for (const a of [...areas].reverse()) {          // 重いものを上に重ねる
+    const g = S.areas[a.name]; if (!g) continue;
+    for (const line of g.lines) {
+      const ll = line.map(([lo, la]) => [la, lo]);
+      tLayers.push(L.polyline(ll, { color: GRADE[a.grade][1], weight: a.grade === 'Unknown' ? 3 : 5, opacity: .95 }).addTo(tmap));
+      ll.forEach((p) => bounds.extend(p));
+    }
+  }
+  if ($('view-tsu').hidden) return;              // 隠れている間は大きさが 0 なので、タブを開いたときに合わせ直す
+  tmap.invalidateSize();
+  if (bounds.isValid()) tmap.fitBounds(bounds.pad(0.1));
+  else tmap.setView([37, 138], 5);
+}
+async function fetchTsunami() {
+  try {
+    const r = await fetch(`${P2P}/jma/tsunami?limit=1`, { cache: 'no-store' });
+    const [q] = await r.json();
+    if (q && Date.now() - jst(q.issue?.time) < 24 * 3600e3) takeTsunami(fromP2PTsu(q));
+  } catch (err) { console.warn('津波予報を取れません', err); }
+}
+
+// ---- 気象庁XML (津波の観測・臨時情報) ----
+const seenDocs = new Set();
+async function pollJma() {
+  try {
+    const r = await fetch(JMA_FEED, { cache: 'no-store' });
+    const feed = new DOMParser().parseFromString(await r.text(), 'application/xml');
+    for (const en of feed.getElementsByTagName('entry')) {
+      const title = en.getElementsByTagName('title')[0]?.textContent || '';
+      const up = new Date(en.getElementsByTagName('updated')[0]?.textContent || 0);
+      const href = en.getElementsByTagName('link')[0]?.getAttribute('href');
+      if (!href || seenDocs.has(href) || Date.now() - up > 6 * 3600e3) continue;
+      if (!/津波情報a|沖合の津波観測|南海トラフ地震臨時情報|後発地震注意情報/.test(title)) continue;
+      seenDocs.add(href);
+      const d = await fetch(href).then((x) => x.text());
+      takeJmaDoc(new DOMParser().parseFromString(d, 'application/xml'), title);
+    }
+  } catch (err) { console.warn('気象庁XMLを取れません', err); }
+}
+const T = (n, name) => n?.getElementsByTagNameNS('*', name) || [];
+const tx = (n, ...path) => { let cur = n; for (const p of path) { cur = T(cur, p)[0]; if (!cur) return ''; } return cur.textContent.trim(); };
+function takeJmaDoc(doc, title) {
+  const report = tx(doc, 'Head', 'ReportDateTime').slice(11, 16);
+  if (/津波|沖合/.test(title)) {
+    const offshore = /沖合/.test(title);
+    const obsNode = T(T(doc, 'Body')[0], 'Observation')[0];
+    for (const item of T(obsNode, 'Item')) {
+      const area = tx(item, 'Area', 'Name');
+      for (const st of T(item, 'Station')) {
+        const h = T(T(st, 'MaxHeight')[0], 'TsunamiHeight')[0];
+        const cond = [tx(st, 'MaxHeight', 'Condition'), h?.getAttribute('condition')].filter(Boolean).join(' ');
+        const rec = { key: (offshore ? '沖' : '') + tx(st, 'Name'), name: tx(st, 'Name') + (offshore ? '（沖合）' : ''), area,
+          time: tx(st, 'MaxHeight', 'DateTime').slice(11, 16) || tx(st, 'FirstHeight', 'ArrivalTime').slice(11, 16),
+          height: h?.getAttribute('description') || tx(st, 'FirstHeight', 'Condition') || '観測中', cond, report };
+        S.obs = S.obs.filter((o) => o.key !== rec.key); S.obs.push(rec);
+      }
+    }
+    renderObs();
+  } else {
+    S.extra = [{ title: tx(doc, 'Head', 'Title') || title, key: tx(doc, 'Body', 'EarthquakeInfo', 'InfoSerial', 'Name'), report }];
+    const x = $('extra'); x.className = 'note warnbox';
+    x.textContent = `${S.extra[0].title}（${S.extra[0].key || '発表'}）${report}発表`;
+  }
+  stamp();
+}
+function renderObs() {
+  $('obs-wrap').hidden = !S.obs.length;
+  const box = $('obs'); box.textContent = '';
+  for (const o of S.obs) {
+    const rising = /上昇中/.test(o.cond);
+    box.append(el('div', {}, el('span', { style: 'display:flex;flex-direction:column;gap:2px' }, el('b', {}, o.name), el('span', { style: 'font-size:12px;color:var(--sub)' }, `${o.time || o.report} 観測`)),
+      el('b', { class: 'num', style: 'text-align:right' }, o.height), el('span', { style: `font-size:12px;font-weight:700;text-align:right;color:${rising ? '#FF8A80' : 'var(--dim)'}` }, rising ? '↑上昇中' : (o.cond || ''))));
+  }
+}
+
+// ---- 受信 (WebSocket) ----
+let wsEEW, wsP2P, live = { eew: false, p2p: false };
+function showConn() {
+  const on = live.eew || live.p2p;
+  $('dot').className = 'dot' + (on ? ' on' : '');
+  $('conn').textContent = on ? `受信中（${[live.eew && '速報', live.p2p && '地震・津波情報'].filter(Boolean).join('・')}）` : '接続していません';
+}
+function connectEEW(delay = 2) {
+  if (wsEEW && wsEEW.readyState <= 1) return;
+  wsEEW = new WebSocket(WOLFX_WS);
+  wsEEW.onopen = () => { live.eew = true; showConn(); delay = 2; };
+  wsEEW.onmessage = (ev) => {
+    try { const m = JSON.parse(ev.data); if (m.type === 'jma_eew' || m.EventID) takeEEW(fromWolfx(m), { fromLive: true }); } catch (_) {}
+  };
+  wsEEW.onclose = () => { live.eew = false; showConn(); setTimeout(() => connectEEW(Math.min(delay * 2, 30)), delay * 1000); };
+}
+function connectP2P(delay = 2) {
+  if (wsP2P && wsP2P.readyState <= 1) return;
+  wsP2P = new WebSocket(P2P_WS);
+  wsP2P.onopen = () => { live.p2p = true; showConn(); };
+  wsP2P.onmessage = (ev) => {
+    try {
+      const m = JSON.parse(ev.data);
+      if (m.code === 551) fetchQuakeInfo();
+      if (m.code === 552) { takeTsunami(fromP2PTsu(m)); pollJma(); }
+    } catch (_) {}
+  };
+  wsP2P.onclose = () => { live.p2p = false; showConn(); setTimeout(() => connectP2P(Math.min(delay * 2, 30)), delay * 1000); };
+}
+
+// ---- タブ ----
+function showTab(which) {
+  const eq = which === 'eq';
+  $('tab-eq').setAttribute('aria-selected', eq); $('tab-tsu').setAttribute('aria-selected', !eq);
+  $('view-eq').hidden = !eq; $('view-tsu').hidden = eq;
+  setTimeout(() => { (eq ? qmap : tmap)?.invalidateSize(); if (!eq && S.tsu) drawTsuMap([...S.tsu.areas].sort((a, b) => RANK[b.grade] - RANK[a.grade])); }, 30);
+}
+$('tab-eq').onclick = () => showTab('eq');
+$('tab-tsu').onclick = () => showTab('tsu');
+
+// ---- 起動 ----
+async function start() {
+  const d = readHash();
+  S.drill = !!d?.drill;
+  $('drill').hidden = !S.drill;
+  if (d?.k === 'tsu' && d.t) { await loadAreas().catch(() => {}); takeTsunami(fromHashTsu(d.t)); showTab('tsu'); }
+  if (d?.k === 'eew' && d.e) takeEEW(fromHashEEW(d.e));
+  renderInfos();
+  // 本物の情報: 訓練でも、ほかに本物の地震や津波が来たら表示する
+  if (!d) {
+    try {   // リンクなしで開いたら、10分以内の速報があれば出す
+      const m = await fetch(WOLFX_LATEST, { cache: 'no-store' }).then((r) => r.json());
+      const e = fromWolfx(m);
+      if (e.announced && Date.now() - e.announced < 600e3) takeEEW(e);
+    } catch (_) {}
+  }
+  if (!S.drill) { fetchTsunami(); pollJma(); }
+  fetchQuakeInfo();
+  connectEEW(); connectP2P();
+  setInterval(() => { if (!document.hidden) { fetchQuakeInfo(); } }, 30e3);
+  setInterval(() => { if (!document.hidden && !S.drill) pollJma(); }, 60e3);
+}
+// 画面に戻ってきたら最新を取り直す (iPhone は裏にいる間ページを止める)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  connectEEW(); connectP2P(); fetchQuakeInfo();
+  if (!S.drill) { fetchTsunami(); pollJma(); }
+});
+window.addEventListener('hashchange', () => location.reload());
+start();
+</script>
+</body>
+</html>
